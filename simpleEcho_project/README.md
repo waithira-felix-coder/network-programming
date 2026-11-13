@@ -7,9 +7,10 @@ using TCP. A client connects to a server, sends text, and receives the same
 data back as an echo. The server uses Python's built-in `socket` module; no
 additional packages are required.
 
-The work has progressed from a basic one-client demonstration in Phase 1 to a
-persistent, logged server in Phase 2. This README records what each phase
-achieved, how the current version works, and possible future improvements.
+The project has progressed from a basic one-client demonstration in Phase 1,
+to a persistent, logged server in Phase 2, and concurrent client handling in
+Phase 3. This README records each phase, how the current version works, and
+possible future improvements.
 
 ## Project journey
 
@@ -31,18 +32,33 @@ message's echo.
 
 ### Phase 2: Persistent server with logging
 
-The current version builds on Phase 1:
+Phase 2 improved the basic echo server:
 
-- Both programs now use `127.0.0.1:5000`.
+- Both programs moved to `127.0.0.1:5000`.
 - The server continues listening after a client disconnects and returns to
   `accept()` to wait for another client.
-- Clients are handled sequentially, one complete session at a time; this
-  version does not serve multiple clients concurrently.
+- At this stage, it handled clients sequentially, one complete session at a
+  time.
 - The server logs when it starts listening and when a client connects, sends
   data, receives an echo, and disconnects. It also reports connection errors.
 - The client waits for the echo before ending a session when the user enters
   `exit`.
 - Comments in the server explain the main steps of the implementation.
+
+### Phase 3: Concurrent client handling
+
+The current version adds concurrent client sessions:
+
+- The server starts a separate background thread for each accepted client.
+- The main server thread immediately returns to `accept()`, so a connected
+  client that is idle does not prevent other clients from connecting and
+  exchanging data.
+- Each handler receives and echoes data only on its own client socket, then
+  closes that socket when the client disconnects.
+- Logging continues to identify each client's address and connection events.
+
+This simple thread-per-client approach is intended for a local learning
+demonstration. It does not impose a maximum number of client threads.
 
 ## How the current version works
 
@@ -51,17 +67,13 @@ Start server
     |
 Create IPv4 TCP socket and bind to 127.0.0.1:5000
     |
-Listen and wait in accept()
+Listen and wait in accept() (main thread)
     |
-Client connects -> log connection
-    |
-Receive data -> log received text -> send the same bytes back
-    |                                      |
-    +---------------- repeat --------------+
-    |
-Client disconnects -> close client socket -> log disconnection
-    |
-Return to accept() and wait for the next client
+Client connects -> start a handler thread -> return to accept()
+                         |
+              Receive and echo data for that client
+                         |
+              Client disconnects -> close its socket
 ```
 
 The server binds to localhost, so it is available only from the same computer.
@@ -82,9 +94,11 @@ send sensitive information through this demonstration.
    python client1.py
    ```
 
-3. Enter text to see it echoed. Enter `exit` to end the client session. Start
-   `python client1.py` again to connect another client. Press `Ctrl+C` in the
-   server terminal to stop the server.
+3. Enter text to see it echoed. Enter `exit` to end that client session.
+   To test concurrency, open more terminals and run `python client1.py` in
+   each. Keep one client connected while sending a message from another;
+   each client should receive its own echo without waiting for the others.
+   Press `Ctrl+C` in the server terminal to stop the server.
 
 ## Example client interaction
 
@@ -97,25 +111,23 @@ Enter message: exit
 Echo from server: exit
 ```
 
-## Example Phase 2 server log
+## Example Phase 3 server log
 
-Example output from two clients handled in sequence. Timestamps and client
-ports vary between runs.
+Example output from two clients connected at the same time. The events from
+their handler threads can appear interleaved. Timestamps and client ports vary.
 
 ```text
-05:33:44 INFO Listening on 127.0.0.1:5000
-05:33:44 INFO Connected: ('127.0.0.1', 64251)
-05:33:44 INFO Received from ('127.0.0.1', 64251): First session
-05:33:44 INFO Echoed 13 bytes to ('127.0.0.1', 64251)
-05:33:44 INFO Received from ('127.0.0.1', 64251): exit
-05:33:44 INFO Echoed 4 bytes to ('127.0.0.1', 64251)
-05:33:44 INFO Disconnected: ('127.0.0.1', 64251)
-05:33:45 INFO Connected: ('127.0.0.1', 64252)
-05:33:45 INFO Received from ('127.0.0.1', 64252): Second session
-05:33:45 INFO Echoed 14 bytes to ('127.0.0.1', 64252)
-05:33:45 INFO Received from ('127.0.0.1', 64252): exit
-05:33:45 INFO Echoed 4 bytes to ('127.0.0.1', 64252)
-05:33:45 INFO Disconnected: ('127.0.0.1', 64252)
+12:00:00 INFO Listening on 127.0.0.1:5000
+12:00:05 INFO Started client handler thread for ('127.0.0.1', 51001)
+12:00:05 INFO Connected: ('127.0.0.1', 51001)
+12:00:06 INFO Received from ('127.0.0.1', 51001): Hello from client 1
+12:00:06 INFO Echoed 19 bytes to ('127.0.0.1', 51001)
+12:00:07 INFO Started client handler thread for ('127.0.0.1', 51002)
+12:00:07 INFO Connected: ('127.0.0.1', 51002)
+12:00:08 INFO Received from ('127.0.0.1', 51002): Hello from client 2
+12:00:08 INFO Echoed 19 bytes to ('127.0.0.1', 51002)
+12:00:10 INFO Disconnected: ('127.0.0.1', 51002)
+12:00:12 INFO Disconnected: ('127.0.0.1', 51001)
 ```
 
 ## Possible future development
@@ -123,13 +135,15 @@ ports vary between runs.
 These are ideas for future phases; they are not implemented in the current
 project:
 
-1. **Concurrent clients:** handle multiple client sessions at the same time
-   with threads or asynchronous I/O.
+1. **Bounded client resources:** limit active client threads or use a bounded
+   worker pool to protect the server when many clients connect.
 2. **More robust protocol:** define message framing and limits so larger or
    partial TCP messages are handled predictably.
-3. **Improved error handling and tests:** add automated tests for normal
+3. **Graceful shutdown:** stop accepting clients and close active sessions
+   cleanly when the server is stopped.
+4. **Improved error handling and tests:** add automated tests for normal
    exchanges, disconnects, and network errors.
-4. **Configurable settings:** allow the host, port, and log level to be set
+5. **Configurable settings:** allow the host, port, and log level to be set
    without editing the source code.
-5. **Security for network use:** add authentication and encrypted transport
+6. **Security for network use:** add authentication and encrypted transport
    before allowing connections beyond localhost.

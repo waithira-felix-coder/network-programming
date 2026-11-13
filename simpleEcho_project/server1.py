@@ -1,5 +1,6 @@
 import logging
 import socket
+import threading
 
 # Address and port where the server waits for local clients.
 HOST = "127.0.0.1"
@@ -53,10 +54,20 @@ def main():
         logging.info("Listening on %s:%d", HOST, PORT)
 
         try:
-            # accept() waits for a client; each client is served before accepting the next.
+            # Accept clients continuously and give each connection its own worker thread.
             while True:
                 connection, address = server.accept()
-                handle_client(connection, address)
+                client_thread = threading.Thread(
+                    target=handle_client,
+                    args=(connection, address),
+                    daemon=True,
+                )
+                try:
+                    client_thread.start()
+                except RuntimeError:
+                    connection.close()
+                    raise
+                logging.info("Started client handler thread for %s", address)
         except KeyboardInterrupt:
             # Let Ctrl+C stop the server with a clear log message.
             logging.info("Server stopped.")
