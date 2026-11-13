@@ -1,30 +1,67 @@
+import logging
 import socket
 
-# Setup host and port
-HOST = '127.0.0.1'
-PORT = 8888
+# Address and port where the server waits for local clients.
+HOST = "127.0.0.1"
+PORT = 5000
+# Maximum number of bytes read from a client in each receive operation.
+BUFFER_SIZE = 1024
 
-# Create server socket
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind((HOST, PORT))
-server.listen(1)
 
-print("Server is listening...")
+def handle_client(connection, address):
+    """Echo data for one client until it disconnects."""
+    # Record that this client has started a session.
+    logging.info("Connected: %s", address)
 
-# Accept a client connection
-conn, addr = server.accept()
-print(f"Connected to client: {addr}")
+    try:
+        # Keep this connection open and process messages until the client closes it.
+        while True:
+            data = connection.recv(BUFFER_SIZE)
+            # An empty byte string means the client closed its connection.
+            if not data:
+                break
 
-while True:
-    # Receive data from client
-    data = conn.recv(1024)
-    if not data:
-        break
-    
-    print("Received:", data.decode())
-    
-    # Echo the same data back
-    conn.sendall(data)
+            # Decode a readable copy for the log; echo the original bytes unchanged.
+            message = data.decode("utf-8", errors="replace")
+            logging.info("Received from %s: %s", address, message)
 
-conn.close()
-server.close()
+            # Send all received bytes back to this same client.
+            connection.sendall(data)
+            logging.info("Echoed %d bytes to %s", len(data), address)
+    except (ConnectionAbortedError, ConnectionResetError, OSError) as error:
+        # Report network errors without stopping the server's accept loop.
+        logging.warning("Connection error with %s: %s", address, error)
+    finally:
+        # Always release this client's socket and record the end of its session.
+        connection.close()
+        logging.info("Disconnected: %s", address)
+
+
+def main():
+    # Include the time, severity, and message in each log entry.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    # Create an IPv4 TCP socket; the with block closes it when the server exits.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        # Restrict access to this computer, then start accepting connections.
+        server.bind((HOST, PORT))
+        server.listen()
+        logging.info("Listening on %s:%d", HOST, PORT)
+
+        try:
+            # accept() waits for a client; each client is served before accepting the next.
+            while True:
+                connection, address = server.accept()
+                handle_client(connection, address)
+        except KeyboardInterrupt:
+            # Let Ctrl+C stop the server with a clear log message.
+            logging.info("Server stopped.")
+
+
+# Run the server only when this file is started directly.
+if __name__ == "__main__":
+    main()
